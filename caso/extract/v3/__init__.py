@@ -29,7 +29,7 @@ class V3BaseExtractor(BaseExtractor):
 
     def _get_keystone_client(self, tenant=None):
         """
-        :param tenant: Unused in V3 implementation.
+        :param tenant: project ID.
         :rtype keystoneclient.httpclient.ZHTTPClient
         """
         return keystoneclient.v3.client.Client(session=self._get_keystone_session(tenant))
