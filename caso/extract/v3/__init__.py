@@ -10,7 +10,6 @@ CONF.import_opt("insecure", "caso.extract.base", "extractor")
 
 import keystoneclient
 
-from caso.extract.v3 import CONF
 from caso.extract.base import BaseExtractor
 
 
