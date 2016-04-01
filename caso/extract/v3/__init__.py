@@ -14,6 +14,8 @@ from caso.extract.base import BaseExtractor
 
 
 class V3BaseExtractor(BaseExtractor):
+    _projects = None
+
     def _get_keystone_session(self, tenant=None):
         auth = keystoneclient.auth.identity.v3.Password(
             username=CONF.extractor.user,
@@ -32,3 +34,22 @@ class V3BaseExtractor(BaseExtractor):
         :rtype keystoneclient.httpclient.ZHTTPClient
         """
         return keystoneclient.v3.client.Client(session=self._get_keystone_session(tenant))
+
+    def get_project_list(self, dummy_project):
+        """
+        Get a list of projects.
+
+        For some reason this endpoint likes to throw a 403 if no project ID is supplied,
+        even though we just want to get a list of projects.
+        Ergo we make a request using an actual project name; it doesn't matter which one.
+        """
+        # TODO: domain scope 403 is probably to do with faulty keystone policy config -- revise?
+        if not self._projects:
+            self._projects = self._get_keystone_client(dummy_project).projects.list()
+
+        return self._projects
+
+    def get_project_id(self, tenant):
+        for project in self.get_project_list(tenant):
+            if project.name == tenant:
+                return project.id

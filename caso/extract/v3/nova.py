@@ -26,33 +26,49 @@ from caso.extract.v3 import V3BaseExtractor, CONF
 
 
 class NovaExtractor(V3BaseExtractor):
-    __projects = None
-
     def _get_conn(self, tenant):
         client = novaclient.client.Client
         conn = client(
-                2,
-                session=self._get_keystone_session(tenant),
-                insecure=CONF.extractor.insecure)
+            2,
+            session=self._get_keystone_session(tenant),
+            insecure=CONF.extractor.insecure)
         return conn
 
-    def get_project_list(self, dummy_project):
+    def get_servers(self, nova_client, since):
         """
-        Get a list of projects.
-
-        For some reason this endpoint likes to throw a 403 if no project ID is supplied,
-        even though we just want to get a list of projects.
-        Ergo we make a request using an actual project name; it doesn't matter which one.
+        Fetch a list of servers.
+        :type nova_client: novaclient
+        :type since: datetime.datetime
         """
-        if not self.__projects:
-            self.__projects = self._get_keystone_client(dummy_project).projects.list()
+        servers = nova_client.servers.list(search_opts={"changes-since": since})
+        return sorted(servers, key=operator.attrgetter("created"))
 
-        return self.__projects
+    def generate_cloud_record(self, server, images, users, vo):
+        """
+        Generate a CloudRecord based on information fetched from nova
+        """
+        status = self.vm_status(server.status)
+        image_id = None
 
-    def get_project_id(self, tenant):
-        for project in self.get_project_list(tenant):
-            if project.name == tenant:
-                return project.id
+        for image in images:
+            if image.id == server.image['id']:
+                image_id = image.metadata.get("vmcatcher_event_ad_mpuri",
+                                              None)
+                break
+
+        if image_id is None:
+            image_id = server.image['id']
+
+        return record.CloudRecord(server.id,
+                                  CONF.site_name,
+                                  server.name,
+                                  server.user_id,
+                                  server.tenant_id,
+                                  vo,
+                                  cloud_type="OpenStack",
+                                  status=status,
+                                  image_id=image_id,
+                                  user_dn=users.get(server.user_id, None))
 
     def extract_for_tenant(self, tenant, lastrun):
         """Extract records for a tenant from given date querying nova.
@@ -60,7 +76,7 @@ class NovaExtractor(V3BaseExtractor):
         This method will get information from nova.
 
         :param tenant: Tenant to extract records for.
-        :param extract_from: datetime.datetime object indicating the date to
+        :param lastrun: datetime.datetime object indicating the date to
                              extract records from
         :returns: A dictionary of {"server_id": caso.record.Record"}
         """
@@ -72,20 +88,12 @@ class NovaExtractor(V3BaseExtractor):
         now = datetime.datetime.now(tz.tzutc()).replace(tzinfo=None)
         end = now + datetime.timedelta(days=1)
 
-        # projects = self.extract_for_tenant(tenant)
-
-        # print(projects)
-
-        # # Try and except here
-        conn = self._get_conn(tenant)
-        ks_conn = self._get_keystone_client(tenant)
-        users = self._get_keystone_users(ks_conn)
+        # Try and except here
+        nova_client = self._get_conn(tenant)
+        ks_client = self._get_keystone_client(tenant)
+        users = self._get_keystone_users(ks_client)
         tenant_id = self.get_project_id(tenant)
-
-        # tenant_id = conn.client.tenant_id
-        servers = conn.servers.list(search_opts={"changes-since": lastrun})
-
-        servers = sorted(servers, key=operator.attrgetter("created"))
+        servers = self.get_servers(nova_client, since=lastrun)
 
         if servers:
             start = dateutil.parser.parse(servers[0].created)
@@ -93,37 +101,16 @@ class NovaExtractor(V3BaseExtractor):
         else:
             start = lastrun
 
-        aux = conn.usage.get(tenant_id, start, end)
+        aux = nova_client.usage.get(tenant_id, start, end)
         usages = getattr(aux, "server_usages", [])
 
-        images = conn.images.list()
+        images = nova_client.images.list()
         records = {}
 
         vo = self.voms_map.get(tenant)
 
         for server in servers:
-            status = self.vm_status(server.status)
-            image_id = None
-            for image in images:
-                if image.id == server.image['id']:
-                    image_id = image.metadata.get("vmcatcher_event_ad_mpuri",
-                                                  None)
-                    break
-
-            if image_id is None:
-                image_id = server.image['id']
-
-            r = record.CloudRecord(server.id,
-                                   CONF.site_name,
-                                   server.name,
-                                   server.user_id,
-                                   server.tenant_id,
-                                   vo,
-                                   cloud_type="OpenStack",
-                                   status=status,
-                                   image_id=image_id,
-                                   user_dn=users.get(server.user_id, None))
-            records[server.id] = r
+            records[server.id] = self.generate_cloud_record(server, images, users, vo)
 
         for usage in usages:
             if usage["instance_id"] not in records:
