@@ -20,7 +20,7 @@ import operator
 import dateutil.parser
 import novaclient.client
 from dateutil import tz
-from caso import record
+from caso.record import CloudRecord
 
 from caso.extract.v3 import V3BaseExtractor, CONF
 
@@ -43,9 +43,10 @@ class NovaExtractor(V3BaseExtractor):
         servers = nova_client.servers.list(search_opts={"changes-since": since})
         return sorted(servers, key=operator.attrgetter("created"))
 
-    def generate_cloud_record(self, server, images, users, vo):
+    def generate_base_cloud_record(self, server, images, users, vo):
         """
-        Generate a CloudRecord based on information fetched from nova
+        Generate a CloudRecord based on information fetched from nova.
+        :rtype: CloudRecord
         """
         status = self.vm_status(server.status)
         image_id = None
@@ -59,16 +60,16 @@ class NovaExtractor(V3BaseExtractor):
         if image_id is None:
             image_id = server.image['id']
 
-        return record.CloudRecord(server.id,
-                                  CONF.site_name,
-                                  server.name,
-                                  server.user_id,
-                                  server.tenant_id,
-                                  vo,
-                                  cloud_type="OpenStack",
-                                  status=status,
-                                  image_id=image_id,
-                                  user_dn=users.get(server.user_id, None))
+        return CloudRecord(server.id,
+                           CONF.site_name,
+                           server.name,
+                           server.user_id,
+                           server.tenant_id,
+                           vo,
+                           cloud_type="OpenStack",
+                           status=status,
+                           image_id=image_id,
+                           user_dn=users.get(server.user_id, None))
 
     def extract_for_tenant(self, tenant, lastrun):
         """Extract records for a tenant from given date querying nova.
@@ -84,7 +85,6 @@ class NovaExtractor(V3BaseExtractor):
         # from the dates. We assume that all dates coming from upstream are
         # in UTC TZ.
 
-        lastrun = lastrun.replace(tzinfo=None)
         now = datetime.datetime.now(tz.tzutc()).replace(tzinfo=None)
         end = now + datetime.timedelta(days=1)
 
@@ -97,20 +97,22 @@ class NovaExtractor(V3BaseExtractor):
 
         if servers:
             start = dateutil.parser.parse(servers[0].created)
-            start = start.replace(tzinfo=None)
         else:
             start = lastrun
+
+        start = start.replace(tzinfo=None)
 
         aux = nova_client.usage.get(tenant_id, start, end)
         usages = getattr(aux, "server_usages", [])
 
         images = nova_client.images.list()
+
         records = {}
 
         vo = self.voms_map.get(tenant)
 
         for server in servers:
-            records[server.id] = self.generate_cloud_record(server, images, users, vo)
+            records[server.id] = self.generate_base_cloud_record(server, images, users, vo)
 
         for usage in usages:
             if usage["instance_id"] not in records:
