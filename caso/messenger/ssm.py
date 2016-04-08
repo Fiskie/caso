@@ -31,7 +31,7 @@ CONF = cfg.CONF
 CONF.register_opts(opts, group="ssm")
 
 
-class SsmMessager(caso.messenger.BaseMessenger):
+class SsmMessenger(caso.messenger.BaseMessenger):
     header = "APEL-cloud-message: v0.2"
     separator = "%%"
 
@@ -59,3 +59,7 @@ class SsmMessager(caso.messenger.BaseMessenger):
         # FIXME(aloga): try except here
         queue = dirq.QueueSimple.QueueSimple(CONF.ssm.output_path)
         queue.add(message)
+
+
+# Compatibility with older versions, in which there was a typo in the class name
+SsmMessager = SsmMessenger
