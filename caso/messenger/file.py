@@ -14,12 +14,10 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 import json
-import socket
 
 from oslo_config import cfg
 from oslo_log import log
 
-from caso import exception
 import caso.messenger
 
 
